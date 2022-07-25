@@ -175,9 +175,7 @@ class FirebasePhoneAuthController extends ChangeNotifier {
     codeSent = false;
     await Future.delayed(Duration.zero, notifyListeners);
 
-    verificationCompletedCallback(AuthCredential authCredential) async {
-      await _loginUser(authCredential: authCredential, autoVerified: true);
-    }
+    verificationCompletedCallback(AuthCredential authCredential) async {}
 
     verificationFailedCallback(FirebaseAuthException authException) {
       _onLoginFailed?.call(authException, null);
