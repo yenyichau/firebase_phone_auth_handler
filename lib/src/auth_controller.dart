@@ -171,14 +171,28 @@ class FirebasePhoneAuthController extends ChangeNotifier {
   /// If for any reason, the OTP is not send,
   /// [_onLoginFailed] is called with [FirebaseAuthException]
   /// object to handle the error.
-  Future<bool> sendOTP() async {
+  ///
+  /// [shouldAwaitCodeSend] can be used to await the OTP send.
+  /// The firebase method completes early, and if [shouldAwaitCodeSend] is false,
+  /// [sendOTP] will complete early, and the OTP will be sent in the background.
+  /// Whereas, if [shouldAwaitCodeSend] is true, [sendOTP] will wait for the
+  /// code send callback to be fired, and [sendOTP] will complete only after
+  /// that callback is fired. Not applicable on web.
+  Future<bool> sendOTP({bool shouldAwaitCodeSend = true}) async {
+    Completer? codeSendCompleter;
+
     codeSent = false;
     await Future.delayed(Duration.zero, notifyListeners);
 
     verificationCompletedCallback(AuthCredential authCredential) async {}
 
     verificationFailedCallback(FirebaseAuthException authException) {
-      _onLoginFailed?.call(authException, null);
+      final stackTrace = authException.stackTrace ?? StackTrace.current;
+
+      if (codeSendCompleter != null && !codeSendCompleter.isCompleted) {
+        codeSendCompleter.completeError(authException, stackTrace);
+      }
+      _onLoginFailed?.call(authException, stackTrace);
     }
 
     codeSentCallback(
@@ -189,6 +203,9 @@ class FirebasePhoneAuthController extends ChangeNotifier {
       _forceResendingToken = forceResendingToken;
       codeSent = true;
       _onCodeSent?.call();
+      if (codeSendCompleter != null && !codeSendCompleter.isCompleted) {
+        codeSendCompleter.complete();
+      }
       _setTimer();
     }
 
@@ -206,6 +223,8 @@ class FirebasePhoneAuthController extends ChangeNotifier {
         _onCodeSent?.call();
         _setTimer();
       } else {
+        codeSendCompleter = Completer();
+
         await _auth.verifyPhoneNumber(
           phoneNumber: _phoneNumber!,
           verificationCompleted: verificationCompletedCallback,
@@ -215,13 +234,21 @@ class FirebasePhoneAuthController extends ChangeNotifier {
           timeout: _autoRetrievalTimeOutDuration,
           forceResendingToken: _forceResendingToken,
         );
+
+        if (shouldAwaitCodeSend) await codeSendCompleter.future;
       }
 
       return true;
     } on FirebaseAuthException catch (e, s) {
+      if (codeSendCompleter != null && !codeSendCompleter.isCompleted) {
+        codeSendCompleter.completeError(e, s);
+      }
       _onLoginFailed?.call(e, s);
       return false;
     } catch (e, s) {
+      if (codeSendCompleter != null && !codeSendCompleter.isCompleted) {
+        codeSendCompleter.completeError(e, s);
+      }
       _onError?.call(e, s);
       return false;
     }
@@ -320,9 +347,11 @@ class FirebasePhoneAuthController extends ChangeNotifier {
     _onError = null;
     _onCodeSent = null;
     _signOutOnSuccessfulVerification = false;
-    _forceResendingToken = null;
+    // _forceResendingToken = null;
     _otpExpirationTimer?.cancel();
     _otpExpirationTimer = null;
+    _otpAutoRetrievalTimer?.cancel();
+    _otpAutoRetrievalTimer = null;
     _phoneNumber = null;
     _linkWithExistingUser = false;
     _autoRetrievalTimeOutDuration = kAutoRetrievalTimeOutDuration;
